@@ -425,9 +425,9 @@ class AnsibleDockerClient(Client):
         try:
             super(AnsibleDockerClient, self).__init__(**self._connect_params)
         except APIError as exc:
-            self.fail("Docker API error: %s" % exc)
+            self.fail(f"Docker API error: {exc}")
         except Exception as exc:
-            self.fail("Error connecting: %s" % exc)
+            self.fail(f"Error connecting: {exc}")
 
     def fail(self, msg):
         fail(msg)
@@ -438,20 +438,19 @@ class AnsibleDockerClient(Client):
 
     def _get_tls_config(self, **kwargs):
         self.log("get_tls_config:")
-        for key in kwargs:
-            self.log("  %s: %s" % (key, kwargs[key]))
+        for key, value in kwargs.items():
+            self.log(f"  {key}: {value}")
         try:
-            tls_config = TLSConfig(**kwargs)
-            return tls_config
+            return TLSConfig(**kwargs)
         except TLSParameterError as exc:
-           self.fail("TLS config error: %s" % exc)
+            self.fail(f"TLS config error: {exc}")
 
     def _get_connect_params(self):
         auth = self.auth_params
 
         self.log("auth params:")
         for key in auth:
-            self.log("  %s: %s" % (key, auth[key]))
+            self.log(f"  {key}: {auth[key]}")
 
         if auth['tls'] or auth['tls_verify']:
             auth['docker_host'] = auth['docker_host'].replace('tcp://', 'https://')
@@ -520,14 +519,16 @@ class AnsibleDockerClient(Client):
                     timeout=auth['timeout'])
 
     def _handle_ssl_error(self, error):
-        match = re.match(r"hostname.*doesn\'t match (\'.*\')", str(error))
-        if match:
-            msg = "You asked for verification that Docker host name matches %s. The actual hostname is %s. " \
-                "Most likely you need to set DOCKER_TLS_HOSTNAME or pass tls_hostname with a value of %s. " \
-                "You may also use TLS without verification by setting the tls parameter to true." \
-                 % (self.auth_params['tls_hostname'], match.group(1))
+        if match := re.match(r"hostname.*doesn\'t match (\'.*\')", str(error)):
+            msg = (
+                "You asked for verification that Docker host name matches %s. The actual hostname is %s. "
+                "Most likely you need to set DOCKER_TLS_HOSTNAME or pass tls_hostname with a value of %s. "
+                "You may also use TLS without verification by setting the tls parameter to true."
+                % (self.auth_params['tls_hostname'], match[1])
+            )
+
             self.fail(msg)
-        self.fail("SSL Exception: %s" % (error))
+        self.fail(f"SSL Exception: {error}")
 
 
 class EnvArgs(object):
@@ -556,7 +557,7 @@ class DockerInventory(object):
     def run(self):
         config_from_file = self._parse_config_file()
         if not config_from_file:
-            config_from_file = dict()
+            config_from_file = {}
         docker_hosts = self.get_hosts(config_from_file)
 
         for host in docker_hosts:
@@ -570,7 +571,13 @@ class DockerInventory(object):
             )
             print(self._json_format_dict(self.groups, pretty_print=self._args.pretty))
         else:
-            print(self._json_format_dict(self.hostvars.get(self._args.host, dict()), pretty_print=self._args.pretty))
+            print(
+                self._json_format_dict(
+                    self.hostvars.get(self._args.host, {}),
+                    pretty_print=self._args.pretty,
+                )
+            )
+
 
         sys.exit(0)
 
@@ -583,29 +590,27 @@ class DockerInventory(object):
         try:
             containers = client.containers(all=True)
         except Exception as exc:
-            self.fail("Error fetching containers for host %s - %s" % (hostname, str(exc)))
+            self.fail(f"Error fetching containers for host {hostname} - {str(exc)}")
 
         for container in containers:
             id = container.get('Id')
             short_id = id[:13]
 
             try:
-                name = container.get('Names', list()).pop(0).lstrip('/')
+                name = container.get('Names', []).pop(0).lstrip('/')
             except IndexError:
                 name = short_id
 
-            if not self._args.host or (self._args.host and self._args.host in [name, id, short_id]):
+            if not self._args.host or self._args.host in [name, id, short_id]:
                 try:
                     inspect = client.inspect_container(id)
                 except Exception as exc:
-                    self.fail("Error inspecting container %s - %s" % (name, str(exc)))
+                    self.fail(f"Error inspecting container {name} - {str(exc)}")
 
-                running = inspect.get('State', dict()).get('Running')
+                running = inspect.get('State', {}).get('Running')
 
-                # Add container to groups
-                image_name = inspect.get('Config', dict()).get('Image')
-                if image_name:
-                    self.groups["image_%s" % (image_name)].append(name)
+                if image_name := inspect.get('Config', {}).get('Image'):
+                    self.groups[f"image_{image_name}"].append(name)
 
                 self.groups[id].append(name)
                 self.groups[name].append(name)
@@ -623,7 +628,7 @@ class DockerInventory(object):
                     # Lookup the public facing port Nat'ed to ssh port.
                     port = client.port(container, ssh_port)[0]
                 except (IndexError, AttributeError, TypeError):
-                    port = dict()
+                    port = {}
 
                 try:
                     ip = default_ip if port['HostIp'] == '0.0.0.0' else port['HostIp']
@@ -653,10 +658,10 @@ class DockerInventory(object):
         :param config: dictionary read from config file. can be empty.
         :return: list of connection dictionaries
         '''
-        hosts = list()
+        hosts = []
 
         hosts_list = config.get('hosts')
-        defaults = config.get('defaults', dict())
+        defaults = config.get('defaults', {})
         self.log('defaults:')
         self.log(defaults, pretty_print=True)
         def_host = defaults.get('host')
@@ -676,38 +681,38 @@ class DockerInventory(object):
             # use hosts from config file
             for host in hosts_list:
                 docker_host = host.get('host') or def_host or self._args.docker_host or \
-                              self._env_args.docker_host or DEFAULT_DOCKER_HOST
+                                  self._env_args.docker_host or DEFAULT_DOCKER_HOST
                 api_version = host.get('version') or def_version or self._args.api_version or \
-                    self._env_args.api_version or DEFAULT_DOCKER_API_VERSION
+                        self._env_args.api_version or DEFAULT_DOCKER_API_VERSION
                 tls_hostname = host.get('tls_hostname') or def_tls_hostname or self._args.tls_hostname or \
-                    self._env_args.tls_hostname
+                        self._env_args.tls_hostname
                 tls_verify = host.get('tls_verify') or def_tls_verify or self._args.tls_verify or \
-                    self._env_args.tls_verify or DEFAULT_TLS_VERIFY
+                        self._env_args.tls_verify or DEFAULT_TLS_VERIFY
                 tls = host.get('tls') or def_tls or self._args.tls or self._env_args.tls or DEFAULT_TLS
                 ssl_version = host.get('ssl_version') or def_ssl_version or self._args.ssl_version or \
-                    self._env_args.ssl_version
+                        self._env_args.ssl_version
 
                 cert_path = host.get('cert_path') or def_cert_path or self._args.cert_path or \
-                    self._env_args.cert_path
+                        self._env_args.cert_path
                 if cert_path and cert_path == self._env_args.cert_path:
                     cert_path = os.path.join(cert_path, 'cert.pem')
 
                 cacert_path = host.get('cacert_path') or def_cacert_path or self._args.cacert_path or \
-                    self._env_args.cert_path
+                        self._env_args.cert_path
                 if cacert_path and cacert_path == self._env_args.cert_path:
                     cacert_path = os.path.join(cacert_path, 'ca.pem')
 
                 key_path = host.get('key_path') or def_key_path or self._args.key_path or \
-                    self._env_args.cert_path
+                        self._env_args.cert_path
                 if key_path and key_path == self._env_args.cert_path:
                     key_path = os.path.join(key_path, 'key.pem')
 
                 timeout = host.get('timeout') or def_timeout or self._args.timeout or self._env_args.timeout or \
-                    DEFAULT_TIMEOUT_SECONDS
+                        DEFAULT_TIMEOUT_SECONDS
                 default_ip = host.get('default_ip') or def_ip or self._args.default_ip_address or \
-                    DEFAULT_IP
+                        DEFAULT_IP
                 default_ssh_port = host.get('private_ssh_port') or def_ssh_port or self._args.private_ssh_port or \
-                    DEFAULT_SSH_PORT
+                        DEFAULT_SSH_PORT
                 host_dict = dict(
                     docker_host=docker_host,
                     api_version=api_version,
@@ -727,7 +732,7 @@ class DockerInventory(object):
             # use default definition
             docker_host = def_host or self._args.docker_host or self._env_args.docker_host or DEFAULT_DOCKER_HOST
             api_version = def_version or self._args.api_version or self._env_args.api_version or \
-                DEFAULT_DOCKER_API_VERSION
+                    DEFAULT_DOCKER_API_VERSION
             tls_hostname = def_tls_hostname or self._args.tls_hostname or self._env_args.tls_hostname
             tls_verify = def_tls_verify or self._args.tls_verify or self._env_args.tls_verify or DEFAULT_TLS_VERIFY
             tls = def_tls or self._args.tls or self._env_args.tls or DEFAULT_TLS
@@ -768,7 +773,7 @@ class DockerInventory(object):
         return hosts
 
     def _parse_config_file(self):
-        config = dict()
+        config = {}
         config_path = None
 
         if self._args.config_file:
@@ -787,7 +792,7 @@ class DockerInventory(object):
                     try:
                         config = yaml.safe_load(f.read())
                     except Exception as exc:
-                        self.fail("Error: parsing %s - %s" % (config_path, str(exc)))
+                        self.fail(f"Error: parsing {config_path} - {str(exc)}")
         return config
 
     def log(self, msg, pretty_print=False):
@@ -813,7 +818,7 @@ class DockerInventory(object):
         # Parse command line arguments
 
         basename = os.path.splitext(os.path.basename(__file__))[0]
-        default_config = basename + '.yml'
+        default_config = f'{basename}.yml'
 
         parser = argparse.ArgumentParser(
                 description='Return Ansible inventory for one or more Docker hosts.')
@@ -825,18 +830,36 @@ class DockerInventory(object):
                             help='Only get information for a specific container.')
         parser.add_argument('--pretty', action='store_true', default=False,
                            help='Pretty print JSON output(default: False)')
-        parser.add_argument('--config-file', action='store', default=default_config,
-                            help="Name of the config file to use. Default is %s" % (default_config))
-        parser.add_argument('--docker-host', action='store', default=None,
-                            help="The base url or Unix sock path to connect to the docker daemon. Defaults to %s"
-                                  % (DEFAULT_DOCKER_HOST))
+        parser.add_argument(
+            '--config-file',
+            action='store',
+            default=default_config,
+            help=f"Name of the config file to use. Default is {default_config}",
+        )
+
+        parser.add_argument(
+            '--docker-host',
+            action='store',
+            default=None,
+            help=f"The base url or Unix sock path to connect to the docker daemon. Defaults to {DEFAULT_DOCKER_HOST}",
+        )
+
         parser.add_argument('--tls-hostname', action='store', default='localhost',
                             help="Host name to expect in TLS certs. Defaults to 'localhost'")
-        parser.add_argument('--api-version', action='store', default=None,
-                            help="Docker daemon API version. Defaults to %s" % (DEFAULT_DOCKER_API_VERSION))
-        parser.add_argument('--timeout', action='store', default=None,
-                            help="Docker connection timeout in seconds. Defaults to %s"
-                                  % (DEFAULT_TIMEOUT_SECONDS))
+        parser.add_argument(
+            '--api-version',
+            action='store',
+            default=None,
+            help=f"Docker daemon API version. Defaults to {DEFAULT_DOCKER_API_VERSION}",
+        )
+
+        parser.add_argument(
+            '--timeout',
+            action='store',
+            default=None,
+            help=f"Docker connection timeout in seconds. Defaults to {DEFAULT_TIMEOUT_SECONDS}",
+        )
+
         parser.add_argument('--cacert-path', action='store', default=None,
                             help="Path to the TLS certificate authority pem file.")
         parser.add_argument('--cert-path', action='store', default=None,
@@ -845,14 +868,34 @@ class DockerInventory(object):
                             help="Path to the TLS encryption key pem file.")
         parser.add_argument('--ssl-version', action='store', default=None,
                             help="TLS version number")
-        parser.add_argument('--tls', action='store_true', default=None,
-                            help="Use TLS. Defaults to %s" % (DEFAULT_TLS))
-        parser.add_argument('--tls-verify', action='store_true', default=None,
-                            help="Verify TLS certificates. Defaults to %s" % (DEFAULT_TLS_VERIFY))
-        parser.add_argument('--private-ssh-port', action='store', default=None,
-                            help="Default private container SSH Port. Defaults to %s" % (DEFAULT_SSH_PORT))
-        parser.add_argument('--default-ip-address', action='store', default=None,
-                            help="Default container SSH IP address. Defaults to %s" % (DEFAULT_IP))
+        parser.add_argument(
+            '--tls',
+            action='store_true',
+            default=None,
+            help=f"Use TLS. Defaults to {DEFAULT_TLS}",
+        )
+
+        parser.add_argument(
+            '--tls-verify',
+            action='store_true',
+            default=None,
+            help=f"Verify TLS certificates. Defaults to {DEFAULT_TLS_VERIFY}",
+        )
+
+        parser.add_argument(
+            '--private-ssh-port',
+            action='store',
+            default=None,
+            help=f"Default private container SSH Port. Defaults to {DEFAULT_SSH_PORT}",
+        )
+
+        parser.add_argument(
+            '--default-ip-address',
+            action='store',
+            default=None,
+            help=f"Default container SSH IP address. Defaults to {DEFAULT_IP}",
+        )
+
         return parser.parse_args()
 
     def _json_format_dict(self, data, pretty_print=False):
@@ -866,7 +909,10 @@ class DockerInventory(object):
 def main():
 
     if not HAS_DOCKER_PY:
-        fail("Failed to import docker-py. Try `pip install docker-py` - %s" % (HAS_DOCKER_ERROR))
+        fail(
+            f"Failed to import docker-py. Try `pip install docker-py` - {HAS_DOCKER_ERROR}"
+        )
+
 
     DockerInventory().run()
 

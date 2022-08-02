@@ -29,7 +29,7 @@ def list_running_hosts():
 
 
 def get_host_details(host):
-    cmd = "vagrant ssh-config {}".format(host)
+    cmd = f"vagrant ssh-config {host}"
     p = subprocess.Popen(cmd.split(), stdout=subprocess.PIPE)
     config = paramiko.SSHConfig()
     config.parse(p.stdout)
